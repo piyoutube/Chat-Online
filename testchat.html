@@ -1,0 +1,406 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>リアルタイム・マルチユーザーチャット (ホバーアクション付)</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        .chat-container {
+            height: calc(100vh - 240px);
+        }
+        .message-wrapper {
+            position: relative;
+            group: hover;
+        }
+        .message-bubble {
+            max-width: 80%;
+            word-wrap: break-word;
+            position: relative;
+            transition: all 0.2s;
+        }
+        /* ホバー時に表示されるアクションボタン */
+        .action-menu {
+            display: none;
+            position: absolute;
+            top: -10px;
+            z-index: 20;
+        }
+        .message-wrapper:hover .action-menu {
+            display: flex;
+        }
+        .message-image {
+            max-width: 100%;
+            max-height: 300px;
+            border-radius: 8px;
+            margin-top: 8px;
+        }
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        .animate-fadeIn {
+            animation: fadeIn 0.2s ease-out forwards;
+        }
+        .no-scrollbar::-webkit-scrollbar { display: none; }
+        .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+        
+        #toast {
+            visibility: hidden;
+            min-width: 250px;
+            margin-left: -125px;
+            background-color: #4f46e5;
+            color: #fff;
+            text-align: center;
+            border-radius: 8px;
+            padding: 16px;
+            position: fixed;
+            z-index: 50;
+            left: 50%;
+            bottom: 30px;
+            box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.3);
+        }
+        #toast.show {
+            visibility: visible;
+            animation: fadein_toast 0.5s, fadeout_toast 0.5s 2.5s;
+        }
+        @keyframes fadein_toast { from {bottom: 0; opacity: 0;} to {bottom: 30px; opacity: 1;} }
+        @keyframes fadeout_toast { from {bottom: 30px; opacity: 1;} to {bottom: 0; opacity: 0;} }
+    </style>
+</head>
+<body class="bg-slate-950 text-slate-200 font-sans">
+
+    <div class="max-w-4xl mx-auto h-screen flex flex-col shadow-2xl bg-slate-900 border-x border-slate-800">
+        <!-- Header -->
+        <header class="p-4 border-b border-slate-800 bg-slate-900/80 backdrop-blur-md flex items-center justify-between sticky top-0 z-10">
+            <div class="flex flex-col">
+                <h1 class="text-xl font-bold text-indigo-400">Global Chat Room</h1>
+                <p id="userDisplay" class="text-[10px] text-slate-500 font-mono uppercase tracking-wider">接続中...</p>
+            </div>
+            <div class="flex items-center space-x-2">
+                <button id="inviteBtn" class="flex items-center space-x-1 text-xs bg-indigo-900/50 text-indigo-300 hover:bg-indigo-800/50 px-3 py-1.5 rounded-full transition-colors font-medium border border-indigo-700/30">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M18 9v3m0 0v3m0-3h3m-3 0h-3m-2-5a4 4 0 11-8 0 4 4 0 018 0zM3 20a6 6 0 0112 0v1H3v-1z" /></svg>
+                    <span>招待</span>
+                </button>
+                <button id="changeNameBtn" class="text-xs bg-indigo-600 hover:bg-indigo-500 text-white px-3 py-1.5 rounded-full transition-colors font-medium border border-indigo-400/30 shadow-sm shadow-indigo-500/20">名前を変更</button>
+                <span id="statusIndicator" class="w-3 h-3 bg-gray-600 rounded-full"></span>
+            </div>
+        </header>
+
+        <!-- Online Users -->
+        <div class="bg-slate-900/50 border-b border-slate-800 p-2 overflow-x-auto whitespace-nowrap no-scrollbar flex items-center space-x-2">
+            <span class="text-[10px] font-bold text-slate-500 uppercase px-2 shrink-0">オンライン:</span>
+            <div id="onlineUserList" class="flex space-x-2 items-center">
+                <span class="text-xs text-slate-600">読み込み中...</span>
+            </div>
+        </div>
+
+        <!-- Chat Area -->
+        <main id="chatWindow" class="chat-container overflow-y-auto p-4 space-y-6 no-scrollbar flex-grow bg-slate-950/50">
+            <div id="loadingState" class="h-full flex items-center justify-center text-slate-600">
+                <div class="flex flex-col items-center space-y-2">
+                    <div class="w-6 h-6 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin"></div>
+                    <p class="text-sm">メッセージを読み込み中...</p>
+                </div>
+            </div>
+        </main>
+
+        <!-- Input Area -->
+        <footer class="p-4 border-t border-slate-800 bg-slate-900">
+            <div id="imagePreview" class="hidden mb-2 p-2 bg-slate-800 rounded-lg flex items-center justify-between border border-slate-700">
+                <div class="flex items-center space-x-2">
+                    <img id="previewImg" src="" class="h-12 w-12 object-cover rounded border border-slate-600">
+                    <span class="text-xs text-slate-400">画像を送信準備中...</span>
+                </div>
+                <button id="removeImgBtn" class="text-slate-400 hover:text-red-400 transition-colors">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" /></svg>
+                </button>
+            </div>
+            <form id="chatForm" class="flex items-center space-x-2">
+                <label for="imageInput" class="cursor-pointer p-2 text-slate-500 hover:text-indigo-400 transition-colors">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" /></svg>
+                    <input type="file" id="imageInput" class="hidden" accept="image/*">
+                </label>
+                <input type="text" id="userInput" placeholder="メッセージを入力..." class="flex-grow p-3 rounded-lg bg-slate-800 border border-slate-700 text-slate-100 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-all" autocomplete="off" disabled>
+                <button type="submit" id="sendBtn" class="bg-indigo-600 text-white px-6 py-2 rounded-lg font-medium hover:bg-indigo-500 disabled:bg-slate-800 disabled:text-slate-600 transition-colors" disabled>送信</button>
+            </form>
+        </footer>
+    </div>
+
+    <div id="toast">通知</div>
+
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, collection, addDoc, onSnapshot, serverTimestamp, deleteDoc, doc, setDoc, updateDoc, arrayUnion, arrayRemove } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        const firebaseConfig = JSON.parse(__firebase_config);
+        const app = initializeApp(firebaseConfig);
+        const auth = getAuth(app);
+        const db = getFirestore(app);
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-chat-app';
+
+        const chatWindow = document.getElementById('chatWindow');
+        const chatForm = document.getElementById('chatForm');
+        const userInput = document.getElementById('userInput');
+        const imageInput = document.getElementById('imageInput');
+        const imagePreview = document.getElementById('imagePreview');
+        const previewImg = document.getElementById('previewImg');
+        const removeImgBtn = document.getElementById('removeImgBtn');
+        const sendBtn = document.getElementById('sendBtn');
+        const userDisplay = document.getElementById('userDisplay');
+        const statusIndicator = document.getElementById('statusIndicator');
+        const loadingState = document.getElementById('loadingState');
+        const inviteBtn = document.getElementById('inviteBtn');
+        const toast = document.getElementById('toast');
+        const changeNameBtn = document.getElementById('changeNameBtn');
+        const onlineUserList = document.getElementById('onlineUserList');
+
+        let currentUser = null;
+        let userName = localStorage.getItem('chat_username') || `User-${Math.floor(Math.random() * 9000) + 1000}`;
+        let selectedImageData = null;
+        let isInitialLoad = true;
+
+        const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        function playChatSound(freq = 880, type = 'sine', duration = 0.1) {
+            if (audioCtx.state === 'suspended') audioCtx.resume();
+            const oscillator = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+            oscillator.type = type;
+            oscillator.frequency.setValueAtTime(freq, audioCtx.currentTime);
+            gainNode.gain.setValueAtTime(0.05, audioCtx.currentTime);
+            gainNode.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + duration);
+            oscillator.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+            oscillator.start();
+            oscillator.stop(audioCtx.currentTime + duration);
+        }
+
+        const init = async () => {
+            try {
+                if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+                    await signInWithCustomToken(auth, __initial_auth_token);
+                } else {
+                    await signInAnonymously(auth);
+                }
+            } catch (err) { console.error("Auth failed:", err); }
+        };
+
+        onAuthStateChanged(auth, (user) => {
+            currentUser = user;
+            if (user) {
+                userDisplay.textContent = `ログイン中: ${userName}`;
+                statusIndicator.className = "w-3 h-3 bg-emerald-500 rounded-full shadow-[0_0_8px_rgba(16,185,129,0.6)]";
+                userInput.disabled = false;
+                sendBtn.disabled = false;
+                if (loadingState) loadingState.remove();
+                updatePresence();
+                startChatListener();
+                startPresenceListener();
+                setInterval(updatePresence, 30000); 
+            }
+        });
+
+        async function updatePresence() {
+            if (!currentUser) return;
+            const userRef = doc(db, 'artifacts', appId, 'public', 'data', 'users', currentUser.uid);
+            await setDoc(userRef, { name: userName, lastSeen: serverTimestamp(), online: true }, { merge: true });
+        }
+
+        function startPresenceListener() {
+            const usersRef = collection(db, 'artifacts', appId, 'public', 'data', 'users');
+            onSnapshot(usersRef, (snapshot) => {
+                const now = Date.now();
+                const onlineUsers = [];
+                snapshot.forEach(doc => {
+                    const data = doc.data();
+                    if (now - (data.lastSeen?.toMillis() || 0) < 120000) {
+                        onlineUsers.push({ id: doc.id, name: data.name });
+                    }
+                });
+                renderOnlineUsers(onlineUsers);
+            }, (err) => console.error(err));
+        }
+
+        function renderOnlineUsers(users) {
+            onlineUserList.innerHTML = '';
+            users.forEach(user => {
+                const isMe = user.id === currentUser?.uid;
+                const badge = document.createElement('span');
+                badge.className = `text-xs px-2.5 py-1 rounded-full border flex items-center space-x-1.5 ${isMe ? 'bg-indigo-900/40 border-indigo-500/50 text-indigo-200' : 'bg-slate-800 border-slate-700 text-slate-300'}`;
+                badge.innerHTML = `<span class="w-1.5 h-1.5 ${isMe ? 'bg-indigo-400 animate-pulse' : 'bg-emerald-500'} rounded-full"></span><span>${user.name}</span>`;
+                onlineUserList.appendChild(badge);
+            });
+        }
+
+        function startChatListener() {
+            const messagesRef = collection(db, 'artifacts', appId, 'public', 'data', 'messages');
+            onSnapshot(messagesRef, (snapshot) => {
+                const messages = [];
+                let hasNew = false;
+                snapshot.docChanges().forEach(change => {
+                    if (change.type === "added" && !isInitialLoad && change.doc.data().senderId !== currentUser.uid) hasNew = true;
+                });
+                if (hasNew) playChatSound(523, 'triangle', 0.15);
+                snapshot.forEach(doc => messages.push({ id: doc.id, ...doc.data() }));
+                messages.sort((a, b) => (a.createdAt?.toMillis() || 0) - (b.createdAt?.toMillis() || 0));
+                renderMessages(messages);
+                isInitialLoad = false;
+            }, (err) => console.error(err));
+        }
+
+        async function sendMessage(text, imageData) {
+            if (!currentUser) return;
+            const messagesRef = collection(db, 'artifacts', appId, 'public', 'data', 'messages');
+            await addDoc(messagesRef, {
+                text, image: imageData || null, senderId: currentUser.uid, senderName: userName,
+                createdAt: serverTimestamp(), reactions: []
+            });
+            playChatSound(880, 'sine', 0.1);
+        }
+
+        async function deleteMessage(id) {
+            await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'messages', id));
+            showToast("削除しました");
+        }
+
+        async function toggleReaction(id, currentReactions) {
+            const msgRef = doc(db, 'artifacts', appId, 'public', 'data', 'messages', id);
+            const myReaction = currentReactions?.find(r => r.userId === currentUser.uid);
+            if (myReaction) {
+                await updateDoc(msgRef, { reactions: arrayRemove(myReaction) });
+            } else {
+                await updateDoc(msgRef, { reactions: arrayUnion({ userId: currentUser.uid, emoji: '👍' }) });
+                playChatSound(1200, 'sine', 0.05);
+            }
+        }
+
+        function renderMessages(messages) {
+            chatWindow.innerHTML = '';
+            messages.forEach(msg => {
+                const isMe = msg.senderId === currentUser?.uid;
+                const wrapper = document.createElement('div');
+                wrapper.className = `message-wrapper flex flex-col ${isMe ? 'items-end' : 'items-start'} animate-fadeIn`;
+
+                // Action Menu (Hover)
+                const actionMenu = document.createElement('div');
+                actionMenu.className = `action-menu space-x-1 ${isMe ? 'right-0' : 'left-0'}`;
+                
+                // Reaction Button
+                const reactBtn = document.createElement('button');
+                reactBtn.className = "bg-slate-800 hover:bg-slate-700 text-slate-300 p-1.5 rounded-full border border-slate-700 shadow-xl transition-all";
+                reactBtn.innerHTML = "👍";
+                reactBtn.onclick = () => toggleReaction(msg.id, msg.reactions);
+                actionMenu.appendChild(reactBtn);
+
+                // Delete Button (Only for me)
+                if (isMe) {
+                    const delBtn = document.createElement('button');
+                    delBtn.className = "bg-slate-800 hover:bg-red-900/40 text-red-400 p-1.5 rounded-full border border-slate-700 shadow-xl transition-all";
+                    delBtn.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>';
+                    delBtn.onclick = () => { if(confirm("削除しますか？")) deleteMessage(msg.id); };
+                    actionMenu.appendChild(delBtn);
+                }
+
+                // --- CHANGED: Only show name label if it's NOT my message ---
+                if (!isMe) {
+                    const nameLabel = document.createElement('span');
+                    nameLabel.className = "text-[10px] text-slate-500 mb-1 px-2";
+                    nameLabel.textContent = msg.senderName;
+                    wrapper.appendChild(nameLabel);
+                }
+
+                const bubble = document.createElement('div');
+                bubble.className = `message-bubble p-3 rounded-2xl shadow-md ${isMe ? 'bg-indigo-600 text-white rounded-br-none' : 'bg-slate-800 border border-slate-700 text-slate-200 rounded-bl-none'}`;
+                
+                if (msg.text) bubble.appendChild(document.createTextNode(msg.text));
+                if (msg.image) {
+                    const img = document.createElement('img');
+                    img.src = msg.image;
+                    img.className = "message-image";
+                    bubble.appendChild(img);
+                }
+
+                // Reactions Display
+                if (msg.reactions && msg.reactions.length > 0) {
+                    const reactDisplay = document.createElement('div');
+                    reactDisplay.className = `mt-2 flex flex-wrap gap-1 ${isMe ? 'justify-end' : 'justify-start'}`;
+                    const count = msg.reactions.length;
+                    const hasMine = msg.reactions.some(r => r.userId === currentUser.uid);
+                    reactDisplay.innerHTML = `<span class="text-[10px] bg-slate-700/50 px-2 py-0.5 rounded-full border border-slate-600/50 flex items-center gap-1 ${hasMine ? 'border-indigo-500 text-indigo-300' : ''}">👍 ${count}</span>`;
+                    bubble.appendChild(reactDisplay);
+                }
+
+                wrapper.appendChild(actionMenu);
+                wrapper.appendChild(bubble);
+                chatWindow.appendChild(wrapper);
+            });
+            chatWindow.scrollTo({ top: chatWindow.scrollHeight, behavior: 'smooth' });
+        }
+
+        function showToast(text) {
+            toast.textContent = text;
+            toast.className = "show";
+            setTimeout(() => toast.className = "", 3000);
+        }
+
+        chatForm.onsubmit = async (e) => {
+            e.preventDefault();
+            const text = userInput.value.trim();
+            if (!text && !selectedImageData) return;
+            const t = text, i = selectedImageData;
+            userInput.value = ''; selectedImageData = null;
+            imagePreview.classList.add('hidden');
+            await sendMessage(t, i);
+        };
+
+        imageInput.onchange = (e) => {
+            const file = e.target.files[0];
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onload = (ev) => {
+                const img = new Image();
+                img.onload = () => {
+                    const canvas = document.createElement('canvas');
+                    const max = 800;
+                    let w = img.width, h = img.height;
+                    if (w > h && w > max) { h *= max/w; w = max; }
+                    else if (h > max) { w *= max/h; h = max; }
+                    canvas.width = w; canvas.height = h;
+                    canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+                    selectedImageData = canvas.toDataURL('image/jpeg', 0.7);
+                    previewImg.src = selectedImageData;
+                    imagePreview.classList.remove('hidden');
+                };
+                img.src = ev.target.result;
+            };
+            reader.readAsDataURL(file);
+        };
+
+        removeImgBtn.onclick = () => { selectedImageData = null; imagePreview.classList.add('hidden'); };
+        
+        changeNameBtn.onclick = () => {
+            const n = prompt("名前:", userName);
+            if (n && n.trim()) {
+                userName = n.trim();
+                localStorage.setItem('chat_username', userName);
+                userDisplay.textContent = `ログイン中: ${userName}`;
+                updatePresence();
+                showToast("名前を変更しました");
+            }
+        };
+
+        inviteBtn.onclick = () => {
+            const input = document.createElement('input');
+            input.value = window.location.href;
+            document.body.appendChild(input);
+            input.select();
+            document.execCommand('copy');
+            document.body.removeChild(input);
+            showToast("リンクをコピーしました");
+        };
+
+        init();
+    </script>
+</body>
+</html>
